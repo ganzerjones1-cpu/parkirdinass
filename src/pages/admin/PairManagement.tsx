@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { generateQRCode } from '../../lib/qrcode';
-import type { Vehicle, Employee, VehicleDriverPair } from '../../types/database';
+import type { Vehicle, Employee } from '../../types/database';
 import {
   Plus,
   Search,
@@ -13,6 +13,11 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import EmployeeSelect from '../../components/EmployeeSelect';
+import {
+  fetchActiveEmployees,
+  fetchActiveVehicles,
+} from '../../lib/supabaseHelpers';
 
 export function PairManagement() {
   const [pairs, setPairs] = useState<any[]>([]);
@@ -35,33 +40,33 @@ export function PairManagement() {
 
   const fetchData = async () => {
     try {
-      const [pairsRes, vehiclesRes, employeesRes] = await Promise.all([
-        supabase
-          .from('vehicle_driver_pairs')
-          .select(
-            `
+      setLoading(true);
+
+      // Keep pairs query with related joins so UI can show vehicle/employee details
+      const pairsPromise = supabase
+        .from('vehicle_driver_pairs')
+        .select(
+          `
           *,
           vehicle:vehicles (*),
           employee:employees (*)
         `
-          )
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('vehicles')
-          .select('*')
-          .is('deleted_at', null)
-          .eq('status_qr', 'Aktif'),
-        supabase.from('employees').select('*').is('deleted_at', null),
+        )
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+
+      // Use helpers to fetch canonical lists of employees and vehicles (deleted_at IS NULL)
+      const [pairsRes, vehiclesData, employeesData] = await Promise.all([
+        pairsPromise,
+        fetchActiveVehicles(),
+        fetchActiveEmployees(),
       ]);
 
-      if (pairsRes.error) throw pairsRes.error;
-      if (vehiclesRes.error) throw vehiclesRes.error;
-      if (employeesRes.error) throw employeesRes.error;
+      if ((pairsRes as any).error) throw (pairsRes as any).error;
 
-      setPairs(pairsRes.data || []);
-      setVehicles(vehiclesRes.data || []);
-      setEmployees(employeesRes.data || []);
+      setPairs((pairsRes as any).data || []);
+      setVehicles(vehiclesData || []);
+      setEmployees(employeesData || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Gagal memuat data');
@@ -81,16 +86,21 @@ export function PairManagement() {
         toast.error('Data tidak valid');
         return;
       }
-const existingVehicle = pairs.find(
-    (p) =>
-        p.vehicle_id === formData.vehicle_id &&
-        !p.deleted_at
-);
 
-if (existingVehicle) {
-    toast.error("Kendaraan ini sudah memiliki paket QR.");
-    return;
-}
+      // Server-side check: pastikan kendaraan belum punya paket aktif (deleted_at IS NULL)
+      const { data: existing, error: checkErr } = await supabase
+        .from('vehicle_driver_pairs')
+        .select('id')
+        .eq('vehicle_id', formData.vehicle_id)
+        .is('deleted_at', null)
+        .limit(1);
+
+      if (checkErr) throw checkErr;
+      if (existing && existing.length > 0) {
+        toast.error('Kendaraan ini sudah memiliki paket QR aktif.');
+        return;
+      }
+
       const qrCodeString = `QR-${vehicle.no_polisi.replace(/\s+/g, '')}-${employee.nip}`;
 
       const { error } = await supabase.from('vehicle_driver_pairs').insert({
@@ -98,12 +108,14 @@ if (existingVehicle) {
         employee_id: formData.employee_id,
         qr_code: qrCodeString,
         is_primary_driver: true,
+        created_at: new Date().toISOString(),
       });
 
       if (error) throw error;
       toast.success('Paket kendaraan berhasil dibuat');
       setShowModal(false);
-      resetForm();
+      // keep selected employee so user can create multiple pairs for same driver
+      setFormData((f) => ({ ...f, vehicle_id: '' }));
       fetchData();
     } catch (error: any) {
       console.error('Error creating pair:', error);
@@ -221,11 +233,8 @@ if (existingVehicle) {
   );
 
   const availableVehicles = vehicles.filter(
-    (v) => !pairs.some((p: any) => p.vehicle_id === v.id && !p.deleted_at)
+    (v) => !pairs.some((p: any) => p.vehicle_id === v.id || p.vehicle?.id === v.id)
   );
-  const availableEmployees = employees.filter(
-  (e) => !e.deleted_at
-);
 
   return (
     <div className="space-y-6">
@@ -350,19 +359,13 @@ if (existingVehicle) {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Sopir Utama *</label>
-                  <select
-                    value={formData.employee_id}
-                    onChange={(e) => setFormData({ ...formData, employee_id: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  <EmployeeSelect
+                    employees={employees}
+                    value={formData.employee_id || null}
+                    onChange={(id) => setFormData({ ...formData, employee_id: id ?? '' })}
+                    placeholder="Pilih Sopir"
                     required
-                  >
-                    <option value="">Pilih Sopir</option>
-                    {availableEmployees.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.nama_lengkap} - NIP: {e.nip}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
                 <div className="flex gap-3 pt-4">
