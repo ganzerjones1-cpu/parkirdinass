@@ -215,8 +215,8 @@ export function PairManagement() {
     (v) => !pairs.some((p: any) => p.vehicle_id === v.id && !p.deleted_at)
   );
   const availableEmployees = employees.filter(
-    (e) => !pairs.some((p: any) => p.employee_id === e.id && !p.deleted_at)
-  );
+  (e) => !e.deleted_at
+);
 
   return (
     <div className="space-y-6">
