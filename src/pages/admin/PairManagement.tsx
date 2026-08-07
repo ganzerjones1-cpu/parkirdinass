@@ -101,7 +101,28 @@ export function PairManagement() {
         return;
       }
 
+      // Ensure employee has NIP (to avoid generating identical QR codes like "-undefined")
+      if (!employee.nip) {
+        toast.error('Sopir belum memiliki NIP. Isi NIP pada data pegawai sebelum membuat paket QR.');
+        return;
+      }
+
       const qrCodeString = `QR-${vehicle.no_polisi.replace(/\s+/g, '')}-${employee.nip}`;
+
+      // Check for existing QR code collision (unique constraint in DB)
+      const { data: qrExisting, error: qrCheckErr } = await supabase
+        .from('vehicle_driver_pairs')
+        .select('id, vehicle_id')
+        .eq('qr_code', qrCodeString)
+        .is('deleted_at', null)
+        .limit(1);
+
+      if (qrCheckErr) throw qrCheckErr;
+      if (qrExisting && qrExisting.length > 0) {
+        // If QR exists but it's the same vehicle/employee pair, treat as duplicate
+        toast.error('QR Code yang dihasilkan sudah ada di sistem. Periksa data sopir atau kendaraan.');
+        return;
+      }
 
       const { error } = await supabase.from('vehicle_driver_pairs').insert({
         vehicle_id: formData.vehicle_id,
