@@ -81,7 +81,16 @@ export function PairManagement() {
         toast.error('Data tidak valid');
         return;
       }
+const existingVehicle = pairs.find(
+    (p) =>
+        p.vehicle_id === formData.vehicle_id &&
+        !p.deleted_at
+);
 
+if (existingVehicle) {
+    toast.error("Kendaraan ini sudah memiliki paket QR.");
+    return;
+}
       const qrCodeString = `QR-${vehicle.no_polisi.replace(/\s+/g, '')}-${employee.nip}`;
 
       const { error } = await supabase.from('vehicle_driver_pairs').insert({
